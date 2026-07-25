@@ -68,6 +68,7 @@ are reference material; you can read them as needed instead of going linearly.
 | A recipe matches your model/backend/hardware | Apply the recipe's model cache resources, then apply its `deploy.yaml`. | [Deploy a Tuned DGD from Recipes](#deploy-a-tuned-dgd-from-recipes) |
 | You want Dynamo to generate the deployment | Create a DGDR. Use `autoApply: true` to let the operator create the DGD, or `autoApply: false` to inspect the generated DGD YAML first. | [Use DGDR to Generate a DGD](#use-dgdr-to-generate-a-dgd) |
 | You already know the exact topology | Author or edit a DGD directly, then apply it with `kubectl`. | [Creating Deployments](deployment/create-deployment.md) |
+| You are deploying vLLM on Intel XPU | Use the XPU DRA templates and an XPU runtime image. | [Creating Deployments](deployment/create-deployment.md) |
 | You are preparing for production | Add model caching, choose backend/search strategy, and validate networking/planner needs. | [Production Details](#production-details) |
 
 ## Deploy a Tuned DGD from Recipes
@@ -159,9 +160,10 @@ GPU resources consumed during profiling.
 - Your GPU SKU is in the [AIC support matrix](#aic-support-matrix)
 
 **Limitations:**
-- If AIC does not support your model/hardware/backend combination, the profiler
-  falls back to a naive memory-fit config (basic TP calculation) which may not
-  be optimal.
+- Fallback to a naive memory-fit config only applies after DGDR accepts
+  `hardware.gpuSku`. Fallback sizing depends on AIC system metadata and does
+  not add support for additional GPU SKUs; unsupported model/GPU/backend
+  combinations can fall back but may be suboptimal.
 - Simulated results may differ from real-hardware performance for unusual
   configurations.
 
@@ -177,23 +179,28 @@ benchmarks with AIPerf. Takes 2–4 hours.
 
 **Use thorough when:**
 - Tuning for production and you need the most optimal configuration
-- Your hardware is not supported by AIC (e.g., PCIe GPUs)
 - You want measured rather than simulated performance data
 
 **Constraints:**
 - **Disaggregated mode only** — thorough does not run aggregated configurations.
 - **`backend: auto` is not supported** — you must specify `vllm`, `sglang`, or
   `trtllm`. The DGDR will be rejected if you use `auto` with `thorough`.
+- **Still requires AIC generator support** — thorough measures candidates on
+  real GPUs, but uses AIC to enumerate candidates and generate the final DGD.
 - **Requires GPU resources** — the profiler deploys real inference engines on
   your cluster during profiling.
 
 ## DGDR Detail: AIC Support Matrix
 
-The rapid strategy relies on AIC performance models. AIC currently supports:
+The rapid strategy relies on AIC system metadata and performance models. Check
+the [AIC support matrix](https://ai-dynamo.github.io/aiconfigurator/support-matrix/)
+for the latest support. Measured profiling still needs AIC system and generator
+support to enumerate and render candidates; rapid also needs performance support
+for the exact model/GPU/backend combination.
 
 ### GPU SKUs
 
-| Supported (rapid) | Not Yet Supported (use thorough) |
+| Supported (rapid) | Not supported by rapid |
 |---|---|
 | H100 SXM | V100 (SXM/PCIe) |
 | H100 PCIe | T4 |
@@ -208,8 +215,8 @@ The rapid strategy relies on AIC performance models. AIC currently supports:
 
 > [!NOTE]
 > Some rapid-mode SKUs use AIC estimate-only data until measured profiles are
-> available. Use `searchStrategy: thorough` when you need hardware-measured
-> profiling for an estimate-only or unsupported SKU.
+> available. Use `searchStrategy: thorough` for measured profiling only when
+> DGDR accepts the SKU and AIC has system and generator support for it.
 
 When specifying GPU SKUs manually, use lowercase underscore format (e.g.,
 `h100_sxm`, not `H100-SXM5-80GB`). See the
@@ -424,7 +431,7 @@ backend explicitly in these cases:
 
 Each backend handles multinode inference differently:
 
-- **vLLM**: Uses Ray for multi-node TP/PP. Ray head runs on the leader, agents on workers.
+- **vLLM**: Uses PyTorch multiprocessing (mp) backend with distributed initialization flags for multi-node TP/PP. Each node runs its own vLLM process with synchronized training initialization.
 - **SGLang**: Uses `--dist-init-addr`, `--nnodes`, `--node-rank` flags for distributed setup.
 - **TRT-LLM**: MPI-based. The operator auto-generates SSH keypairs; the leader runs `mpirun`.
 
