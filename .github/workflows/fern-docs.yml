@@ -118,13 +118,28 @@ jobs:
           path: source-checkout
           fetch-depth: 1
 
-      - name: Checkout docs-website branch
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          ref: docs-website
-          path: docs-checkout
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout docs-website branch (bootstrap if missing)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The docs-website branch may not exist yet (e.g. fresh repo or it was
+          # deleted). Instead of failing at actions/checkout, create an orphan
+          # branch so the sync step below can populate and push it.
+          AUTH_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$AUTH_URL" docs-website >/dev/null 2>&1; then
+            echo "docs-website branch exists; checking it out"
+            git clone --depth 1 --branch docs-website "$AUTH_URL" docs-checkout
+          else
+            echo "docs-website branch missing; bootstrapping an orphan branch"
+            git clone --depth 1 "$AUTH_URL" docs-checkout
+            cd docs-checkout
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout --orphan docs-website
+            git rm -rf . >/dev/null 2>&1 || true
+            git commit --allow-empty -m "chore: bootstrap docs-website branch for Fern docs"
+            git push origin docs-website
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
@@ -520,13 +535,27 @@ jobs:
           path: source-checkout
           fetch-depth: 1
 
-      - name: Checkout docs-website branch
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          ref: docs-website
-          path: docs-checkout
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout docs-website branch (bootstrap if missing)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same bootstrap as the sync job: a version release also needs
+          # docs-website, so create the orphan branch if it is missing.
+          AUTH_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$AUTH_URL" docs-website >/dev/null 2>&1; then
+            echo "docs-website branch exists; checking it out"
+            git clone --branch docs-website "$AUTH_URL" docs-checkout
+          else
+            echo "docs-website branch missing; bootstrapping an orphan branch"
+            git clone --depth 1 "$AUTH_URL" docs-checkout
+            cd docs-checkout
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout --orphan docs-website
+            git rm -rf . >/dev/null 2>&1 || true
+            git commit --allow-empty -m "chore: bootstrap docs-website branch for Fern docs"
+            git push origin docs-website
+          fi
 
       - name: Check if version already exists
         env:
